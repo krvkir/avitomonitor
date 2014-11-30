@@ -59,18 +59,27 @@ class Parser:
 
         parsed_body = html.fromstring(body)
         raw_items = parsed_body.xpath(self.items_xpath)
-        items = [self.parse_item(i) for i in raw_items]
-        items = {hash_dict(i): i for i in items}
 
-        return items
+        items = []
+        for i in raw_items:
+            try:
+                items.append(self.parse_item(i))
+            except Exception as e:
+                print("PARSE ERROR: %" % type(e))
+                pass
+
+        return {hash_dict(i): i for i in items}
 
     def refresh(self):
         """ Get items and add ones that do not exist
         """
-        # get items from the site
-        items = self.get_items()
         # initialize new items hashes list
         newhashes = []
+
+        # get items from the site
+        items = self.get_items()
+        if len(items) == 0:
+            return []
 
         # checking which items are new
         for h, i in items.items():

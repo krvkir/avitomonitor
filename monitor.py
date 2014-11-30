@@ -18,14 +18,21 @@ parser.add_argument(
     type=str,
     help="Search query"
     )
+parser.add_argument(
+    "-l",
+    type=str,
+    help="Location",
+    default='rossiya'
+    )
 args = parser.parse_args()
 
 ######################################################################
 # Main
 
 query = args.q.split(' ')
-queryurl = "http://www.avito.ru/rossiya?q=%s" % '+'.join(query)
-dbpath = '_'.join(query) + '.sqlite3'
+location = args.l
+queryurl = "http://www.avito.ru/%s?q=%s" % (location, '+'.join(query))
+dbpath = "%s-%s.sqlite3" % ('_'.join(query), location)
 
 # loading records database
 sp = AvitoParser(queryurl)
@@ -48,8 +55,8 @@ while True:
                 os.system("notify-send '%s: %s'"
                           % (i['title'], i['price']))
     except Exception as e:
-        print("ERROR: %s" % type(e))
-        print("Message:\n%s" % e.message())
+        print("LOOP ERROR: %s" % type(e))
+        # print("Message:\n%s" % e.message())
 
     # waiting
     try:
