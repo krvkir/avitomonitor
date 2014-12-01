@@ -65,7 +65,8 @@ class Parser:
             return {}
 
         if headers['status'] != '200':
-            raise Exception("Server returned error")
+            return {}
+            # raise Exception("Server returned error")
 
         parsed_body = html.fromstring(body)
         raw_items = parsed_body.xpath(self.items_xpath)
@@ -76,7 +77,9 @@ class Parser:
                 items.append(self.parse_item(i))
             except Exception as e:
                 print("PARSE ERROR: %s" % type(e))
-                pprint(i.xpath('text()'))
+                pprint(i.values())
+                for lnk in i.iterlinks():
+                    print(lnk)
                 pass
 
         return {self.hash_item(i): i for i in items}
@@ -183,9 +186,10 @@ class AvitoParser(Parser):
     ############################################################
 
     def print_item(self, i):
-        print("%s\t%s\t%s\t%s\t%s"
-              % (i['date'], i['city'], i['price'],
-                 i['title'], i['url']))
+        print("%s\n\t%s\t%s\t%s\n\thttp://%s\n"
+              % (i['title'],
+                 i['price'], i['date'], i['city'],
+                 self.params['baseurl']+i['url']))
 
     ############################################################
 
@@ -208,7 +212,11 @@ class AvitoParser(Parser):
             "*[@class='data']/*[@class='date']/text()"
         )[0]))
 
-        photourl = i.xpath("*[@class='b-photo']/a/img/@src")[0]
+        try:
+            photourl = i.xpath("*[@class='b-photo']/a/img/@src")[0]
+        except:
+            # for items without photo
+            photourl = ''
 
         return {'price': price,
                 'title': title,
