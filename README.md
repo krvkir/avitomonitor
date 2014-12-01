@@ -10,10 +10,9 @@ Works:
   - pages number limited by maxpages constant (by default = 5)
   - smart refresh: if no new items found on current page, next pages are not requested (assuming results ordered by addition time)
 - monitor.py:
-  - one can specify search query
+  - one can specify the location, multiple search queries, multiple categories
   - new results are printed, sent to the message bus (needs notify-send installed) and saved
-  - refreshes results every 60 seconds
+  - refreshes results every 60 seconds (adjustable)
 
 Doesn't work
-- one can't specify city
 - does not distinguish ad items
