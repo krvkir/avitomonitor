@@ -15,43 +15,72 @@ from SiteParse import AvitoParser
 # Parameters
 parser = argparse.ArgumentParser()
 parser.add_argument(
-    "-q",
-    type=str,
-    help="Search query"
-    )
-parser.add_argument(
     "-l",
     type=str,
     help="Location",
     default='rossiya'
     )
 parser.add_argument(
+    "-q",
+    type=str,
+    help="""Search queries:
+Each query is space-separated list of words,
+one query divided from another by comma.
+"""
+    )
+parser.add_argument(
+    "-c",
+    type=str,
+    help="Categories, space-separated list",
+    default=''
+    )
+parser.add_argument(
+    "-p",
+    type=int,
+    help="Maximum pages to crawl through (default is 5)",
+    default=5
+    )
+parser.add_argument(
     "-s",
     type=int,
-    help="Save found items into db",
+    help="Save found items into db (default is true)",
     default=1
+    )
+parser.add_argument(
+    "-t",
+    type=int,
+    help="Time interval in seconds between refreshes (default is 60)",
+    default=60
     )
 args = parser.parse_args()
 
 ######################################################################
 # Main
 
-# creating the parser
-query = args.q.split(' ')
+# preparing parameters
+queries = [q.split() for q in args.q.split(',')]
 location = args.l
-# queryurl = "http://www.avito.ru/%s?q=%s" % (location, '+'.join(query))
+categories = args.c.replace(',', ' ').split()
 params = {
     # basic
     'baseurl': 'www.avito.ru',
     'location': location,
-    'query': query,
+    'categories': categories,
+    'queries': queries,
     # auxilliary
-    'maxpages': 5,
+    'maxpages': args.p,
     }
+print("Starting monitor with the following parameters:")
+for k, v in params.items():
+    print("\t%s:\t\t%s" % (k, str(v)))
+print("\n")
+
+# creating the parser
 sp = AvitoParser(params)
 
 # loading records database
-dbpath = "%s-%s.sqlite3" % ('_'.join(query), location)
+dbpath = "%s-%s.sqlite3" \
+         % ('_'.join(['_'.join(q) for q in queries]), location)
 sp.load(dbpath)
 
 print("Already in db: %i" % len(sp.items))
@@ -81,7 +110,7 @@ while True:
 
     # waiting
     try:
-        time.sleep(60)
+        time.sleep(args.t)
     except KeyboardInterrupt:
         print("\nExiting.")
         exit()

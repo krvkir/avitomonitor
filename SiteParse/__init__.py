@@ -11,6 +11,8 @@ from lxml import html
 import sqlite3
 import pickle
 
+import sys
+import traceback
 from pprint import pprint
 
 
@@ -75,11 +77,17 @@ class Parser:
         for i in raw_items:
             try:
                 items.append(self.parse_item(i))
-            except Exception as e:
-                print("PARSE ERROR: %s" % type(e))
+            except Exception:
+                # exception info
+                # etype, e, tb = sys.exc_info()
+                traceback.print_exc()
+                # print("PARSE ERROR: %s: %s" % (e.errno, e.strerror))
+                # traceback.print_tb(tb)
+                # item info (and link to the item on the site)
                 pprint(i.values())
                 for lnk in i.iterlinks():
                     print(lnk)
+                # skip this item and proceed
                 pass
 
         return {self.hash_item(i): i for i in items}
@@ -91,27 +99,34 @@ class Parser:
         # initialize new items hashes list
         newhashes = []
 
-        for p in range(1, self.params['maxpages']+1):
-            # prepare url
-            url = self.make_url(self.params, {'page': p})
-            # get items from the site
-            items = self.get_items(url)
+        # for every query...
+        for query in self.params['queries']:
+            # ...searching for every category listed...
+            for cat in self.params['categories']:
+                # ... and crawling through pages before stop getting new items
+                for p in range(1, self.params['maxpages']+1):
+                    # prepare url
+                    url = self.make_url(
+                        self.params,
+                        {'query': query, 'category': cat, 'page': p})
+                    # get items from the site
+                    items = self.get_items(url)
 
-            # checking which items are new
-            newnbr = 0
-            for h, i in items.items():
-                if h not in self.items:
-                    self.items[h] = i
-                    newhashes.append(h)
-                    newnbr += 1
+                    # checking which items are new
+                    newnbr = 0
+                    for h, i in items.items():
+                        if h not in self.items:
+                            self.items[h] = i
+                            newhashes.append(h)
+                            newnbr += 1
 
-            # if no new items found on this page
-            # then we reached the extent where we already searched,
-            # no need to go farther through pages
-            if newnbr == 0:
-                break
+                    # if no new items found on this page
+                    # then we reached the extent where we already searched,
+                    # no need to go farther through pages
+                    if newnbr == 0:
+                        break
 
-            time.sleep(3)
+                    time.sleep(3)
 
         # return new items hashes list
         return newhashes
@@ -175,11 +190,13 @@ class AvitoParser(Parser):
     items_xpath = ".//*[starts-with(@class, 'item')]"
 
     def make_url(self, params, extparams):
-        return "http://%s/%s?q=%s&p=%i" % \
+        return "http://%s/%s/%s?q=%s&p=%i" % \
             (
                 params['baseurl'],
                 params['location'],
-                '+'.join(params['query']),
+
+                extparams['category'],
+                '+'.join(extparams['query']),
                 extparams['page']
             )
 
@@ -188,7 +205,7 @@ class AvitoParser(Parser):
     def print_item(self, i):
         print("%s\n\t%s\t%s\t%s\n\thttp://%s\n"
               % (i['title'],
-                 i['price'], i['date'], i['city'],
+                 i['price'], i['date'], i['location'],
                  self.params['baseurl']+i['url']))
 
     ############################################################
@@ -207,11 +224,19 @@ class AvitoParser(Parser):
         company = normalize_str(category_and_company[1]) \
             if len(category_and_company) > 1 else ''
 
-        city = normalize_str(d.xpath("*[@class='data']/p[2]/text()")[0])
+        # location
+        try:
+            location = normalize_str(
+                d.xpath("*[@class='data']/p[2]/text()")[0])
+        except:
+            # for items without location
+            location = ''
+
         date = normalize_str(normalize_date(d.xpath(
             "*[@class='data']/*[@class='date']/text()"
         )[0]))
 
+        # icon URL
         try:
             photourl = i.xpath("*[@class='b-photo']/a/img/@src")[0]
         except:
@@ -225,14 +250,14 @@ class AvitoParser(Parser):
                 'category': category,
                 'company': company,
 
-                'city': city,
+                'location': location,
                 'date': date,
 
                 'photourl': photourl,
                 }
 
     fields_order = ['price', 'title', 'url', 'category', 'company',
-                    'city', 'date', 'photourl']
+                    'location', 'date', 'photourl']
 
     def hash_item(self, i):
         """ Calculate hash uniquely identifying item """
