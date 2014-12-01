@@ -100,9 +100,10 @@ while True:
             for i, h in enumerate(hashes):
                 item = sp.items[h]
                 sp.print_item(item)
-                if i < 10:
+                if i < 5:
                     os.system("notify-send '%s: %s'"
                               % (item['title'], item['price']))
+            os.system("notify-send '...and %i more.'" % (len(hashes)-5))
     except Exception as e:
         print("LOOP ERROR: %s" % type(e))
         raise e

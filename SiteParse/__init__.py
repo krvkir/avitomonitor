@@ -15,6 +15,21 @@ import sys
 import traceback
 from pprint import pprint
 
+######################################################################
+
+
+class SiteParseError(Exception):
+    def __init__(self, message=''):
+        self.message = message
+    
+    def _get_message(self):
+        return self._message
+
+    def _set_message(self, message):
+        self._message = message
+
+    message = property(_get_message, _set_message)
+
 
 ######################################################################
 ######################################################################
@@ -67,10 +82,18 @@ class Parser:
             return {}
 
         if headers['status'] != '200':
-            return {}
-            # raise Exception("Server returned error")
+            raise SiteParseError("site_returned_%s" % headers['status'])
 
+        # parsing returned page
         parsed_body = html.fromstring(body)
+
+        # checking if query was corrected
+        # if so, abandoning this query
+        query_correction = parsed_body.xpath(
+            ".//*[@class='catalog-correction']")
+        if len(query_correction) > 0:
+            raise SiteParseError("query_correction")
+
         raw_items = parsed_body.xpath(self.items_xpath)
 
         items = []
@@ -106,11 +129,16 @@ class Parser:
                 # ... and crawling through pages before stop getting new items
                 for p in range(1, self.params['maxpages']+1):
                     # prepare url
-                    url = self.make_url(
-                        self.params,
-                        {'query': query, 'category': cat, 'page': p})
+                    extparams = {'query': query, 'category': cat, 'page': p}
+                    url = self.make_url(self.params, extparams)
+
                     # get items from the site
-                    items = self.get_items(url)
+                    try:
+                        items = self.get_items(url)
+                    except SiteParseError as e:
+                        print("Attention: %s\t(%s, %s, page %s)"
+                              % (e.message, ' '.join(query), cat, p))
+                        break
 
                     # checking which items are new
                     newnbr = 0
@@ -126,7 +154,7 @@ class Parser:
                     if newnbr == 0:
                         break
 
-                    time.sleep(3)
+                    time.sleep(1)
 
         # return new items hashes list
         return newhashes
