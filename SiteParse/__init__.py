@@ -22,11 +22,16 @@ class Parser:
     """ Abstract class for site parsers
     """
 
+    params = {}
     items_xpath = ''
     items = {}
 
-    def __init__(self, url):
-        self.url = url
+    def __init__(self, params):
+        self.params = params
+
+    def make_url(self, params, extparams):
+        """ Makes url for the request. Site-specific function """
+        raise NotImplementedError()
 
     ############################################################
 
@@ -45,14 +50,19 @@ class Parser:
         """ Parse items html blocks to property dicts """
         raise NotImplementedError()
 
-    def get_items(self):
-        """ Get items html blocks from avito.ru
+    def hash_item(self, i):
+        """ Calculate hash uniquely identifying item """
+        raise NotImplementedError()
+
+    def get_items(self, url):
+        """ Get items html blocks, parse them and return.
+        There is NO checking for new items, only fetching and parsing
         """
         req = httplib2.Http()
         try:
-            headers, body = req.request(self.url, method='GET')
+            headers, body = req.request(url, method='GET')
         except httplib2.ServerNotFoundError:
-            return []
+            return {}
 
         if headers['status'] != '200':
             raise Exception("Server returned error")
@@ -65,28 +75,40 @@ class Parser:
             try:
                 items.append(self.parse_item(i))
             except Exception as e:
-                print("PARSE ERROR: %" % type(e))
+                print("PARSE ERROR: %s" % type(e))
+                pprint(i.xpath('text()'))
                 pass
 
-        return {hash_dict(i): i for i in items}
+        return {self.hash_item(i): i for i in items}
 
     def refresh(self):
-        """ Get items and add ones that do not exist
+        """ Get items, add ones that do not already present in storage
+        Check for new items is THERE
         """
         # initialize new items hashes list
         newhashes = []
 
-        # get items from the site
-        items = self.get_items()
-        if len(items) == 0:
-            return []
+        for p in range(1, self.params['maxpages']+1):
+            # prepare url
+            url = self.make_url(self.params, {'page': p})
+            # get items from the site
+            items = self.get_items(url)
 
-        # checking which items are new
-        for h, i in items.items():
-            if h not in self.items:
-                print("ACHTUNG!!! new item!!!")
-                self.items[h] = i
-                newhashes.append(h)
+            # checking which items are new
+            newnbr = 0
+            for h, i in items.items():
+                if h not in self.items:
+                    self.items[h] = i
+                    newhashes.append(h)
+                    newnbr += 1
+
+            # if no new items found on this page
+            # then we reached the extent where we already searched,
+            # no need to go farther through pages
+            if newnbr == 0:
+                break
+
+            time.sleep(3)
 
         # return new items hashes list
         return newhashes
@@ -116,7 +138,6 @@ class Parser:
         for k, i in items.items():
             cur.execute("SELECT * FROM Items WHERE hash=?", [k])
             if not cur.fetchone():
-                print("ACHTUNG!!! item not from DB!!!")
                 cur.execute(
                     "INSERT INTO Items (hash, url, data) VALUES (?, ?, ?)",
                     [k, i['url'], pickle.dumps(i)]
@@ -136,10 +157,6 @@ class Parser:
         conn = self.init_db(path)
         cur = conn.cursor()
         cur.execute("SELECT hash, data FROM Items")
-        # self.items = {}
-        # for k, i in cur:
-        #     pprint(k)
-        #     self.items[k] = i
         self.items = {k: pickle.loads(i) for k, i in cur}
         cur.close()
         conn.close()
@@ -149,16 +166,26 @@ class Parser:
 ######################################################################
 
 class AvitoParser(Parser):
-    """ Class for parsing avito.ru
+    """ Class for parsing avito.ru.
+    Version 2014-12-01
     """
-
     items_xpath = ".//*[starts-with(@class, 'item')]"
+
+    def make_url(self, params, extparams):
+        return "http://%s/%s?q=%s&p=%i" % \
+            (
+                params['baseurl'],
+                params['location'],
+                '+'.join(params['query']),
+                extparams['page']
+            )
 
     ############################################################
 
     def print_item(self, i):
-        print("%s\t%s\t%s\t%s"
-              % (i['date'], i['city'], i['price'], i['title']))
+        print("%s\t%s\t%s\t%s\t%s"
+              % (i['date'], i['city'], i['price'],
+                 i['title'], i['url']))
 
     ############################################################
 
@@ -196,6 +223,16 @@ class AvitoParser(Parser):
                 'photourl': photourl,
                 }
 
+    fields_order = ['price', 'title', 'url', 'category', 'company',
+                    'city', 'date', 'photourl']
+
+    def hash_item(self, i):
+        """ Calculate hash uniquely identifying item """
+        h = hashlib.md5()
+        for f in self.fields_order:
+            h.update(i[f].encode('UTF-8'))
+        return h.hexdigest()
+
 
 ######################################################################
 ######################################################################
@@ -225,11 +262,3 @@ def normalize_str(s):
     """ Remove all redundant spaces or newlines or tabs
     """
     return ' '.join(s.split()).lower()
-
-
-def hash_dict(p):
-    """ Calculate hash of dict properties
-    """
-    m = hashlib.md5()
-    m.update(''.join(p.values()).encode('UTF-8'))
-    return m.hexdigest()
