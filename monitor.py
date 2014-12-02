@@ -35,11 +35,25 @@ parser.add_argument(
     default=''
     )
 parser.add_argument(
-    "-p",
+    "-pages",
     type=int,
     help="Maximum pages to crawl through (default is 5)",
     default=5
     )
+
+parser.add_argument(
+    "-pmin",
+    type=int,
+    help="Minimal price for the item",
+    default=0
+    )
+parser.add_argument(
+    "-pmax",
+    type=int,
+    help="Maximal price for the item",
+    default=0
+    )
+
 parser.add_argument(
     "-s",
     type=int,
@@ -67,8 +81,9 @@ params = {
     'location': location,
     'categories': categories,
     'queries': queries,
+    'price': [args.pmin, args.pmax],
     # auxilliary
-    'maxpages': args.p,
+    'maxpages': args.pages,
     }
 print("Starting monitor with the following parameters:")
 for k, v in params.items():
@@ -100,10 +115,23 @@ while True:
             for i, h in enumerate(hashes):
                 item = sp.items[h]
                 sp.print_item(item)
+                # notification
                 if i < 5:
-                    os.system("notify-send '%s: %s'"
-                              % (item['title'], item['price']))
-            os.system("notify-send '...and %i more.'" % (len(hashes)-5))
+                    # checking if there was image
+                    if len(item['photourls']) > 0:
+                        photoname = item['photourls'][0].split('/')[-1]
+                        photopath = "%s/photo/%s/%s" \
+                                    % (os.getcwd(), h, photoname)
+                    else:
+                        photopath = ''
+                    # messenging
+                    cmd = "notify-send -u critical -i '%s' '(%s) %s: %s'"\
+                          % (photopath, item['date'],
+                             item['title'], item['price'])
+                    os.system(cmd)
+            if len(hashes)-5 > 0:
+                os.system("notify-send -u critical '...and %i more.'"
+                          % (len(hashes)-5))
     except Exception as e:
         print("LOOP ERROR: %s" % type(e))
         raise e

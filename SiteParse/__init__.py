@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import os
 import time
 import datetime
 
@@ -21,7 +22,7 @@ from pprint import pprint
 class SiteParseError(Exception):
     def __init__(self, message=''):
         self.message = message
-    
+
     def _get_message(self):
         return self._message
 
@@ -71,6 +72,21 @@ class Parser:
         """ Calculate hash uniquely identifying item """
         raise NotImplementedError()
 
+    def check_item(self, item):
+        """ Winnows items according to some parameters """
+        # price
+        minprice, maxprice = self.params['price']
+        if item['price'] < minprice:
+            return False
+        if maxprice > 0 and item['price'] > maxprice:
+            return False
+
+        return True
+
+    def get_items_after_request_hook(self, parsed_body):
+        """ Checks the entire request: was it relevant or not """
+        pass
+
     def get_items(self, url):
         """ Get items html blocks, parse them and return.
         There is NO checking for new items, only fetching and parsing
@@ -86,20 +102,18 @@ class Parser:
 
         # parsing returned page
         parsed_body = html.fromstring(body)
-
-        # checking if query was corrected
-        # if so, abandoning this query
-        query_correction = parsed_body.xpath(
-            ".//*[@class='catalog-correction']")
-        if len(query_correction) > 0:
-            raise SiteParseError("query_correction")
+        self.get_items_after_request_hook(parsed_body)
 
         raw_items = parsed_body.xpath(self.items_xpath)
 
-        items = []
+        items = {}
         for i in raw_items:
             try:
-                items.append(self.parse_item(i))
+                item = self.parse_item(i)
+                if self.check_item(item):
+                    # saving item
+                    h = self.hash_item(item)
+                    items[h] = item
             except Exception:
                 # exception info
                 # etype, e, tb = sys.exc_info()
@@ -113,7 +127,7 @@ class Parser:
                 # skip this item and proceed
                 pass
 
-        return {self.hash_item(i): i for i in items}
+        return items
 
     def refresh(self):
         """ Get items, add ones that do not already present in storage
@@ -128,35 +142,63 @@ class Parser:
             for cat in self.params['categories']:
                 # ... and crawling through pages before stop getting new items
                 for p in range(1, self.params['maxpages']+1):
-                    # prepare url
                     extparams = {'query': query, 'category': cat, 'page': p}
-                    url = self.make_url(self.params, extparams)
-
-                    # get items from the site
-                    try:
-                        items = self.get_items(url)
-                    except SiteParseError as e:
-                        print("Attention: %s\t(%s, %s, page %s)"
-                              % (e.message, ' '.join(query), cat, p))
-                        break
-
-                    # checking which items are new
-                    newnbr = 0
-                    for h, i in items.items():
-                        if h not in self.items:
-                            self.items[h] = i
-                            newhashes.append(h)
-                            newnbr += 1
+                    _newhashes = self._refresh(extparams)
 
                     # if no new items found on this page
                     # then we reached the extent where we already searched,
                     # no need to go farther through pages
-                    if newnbr == 0:
+                    if len(_newhashes) == 0:
                         break
+
+                    # keep all new items found
+                    for h in _newhashes:
+                        newhashes.append(h)
 
                     time.sleep(1)
 
         # return new items hashes list
+        return newhashes
+
+    def _refresh(self, extparams):
+        """ Service routine that refreshes items
+        in the local search area bounded by extparams
+        """
+        # prepare url
+        url = self.make_url(self.params, extparams)
+
+        # get items from the site
+        try:
+            items = self.get_items(url)
+        except SiteParseError as e:
+            print("Attention: %s\t(%s, %s, page %s)"
+                  % (e.message, ' '.join(extparams['query']),
+                     extparams['category'], extparams['page']))
+            return []
+
+        # check which items are new
+        newhashes = []
+        for h, item in items.items():
+            if h in self.items:
+                # skip already known items
+                continue
+
+            ####################
+            # Found new item:
+
+            # 1. save it
+            self.items[h] = item
+            newhashes.append(h)
+
+            # 2. download photos
+            dir = "./photo/%s/" % (h)
+            if not os.path.isdir(dir):
+                os.mkdir(dir)
+            for url in item['photourls']:
+                fname = url.split('/')[-1]
+                if not os.path.exists(dir + fname):
+                    self.download_photo("http:" + url, dir + fname)
+
         return newhashes
 
     ############################################################
@@ -207,6 +249,21 @@ class Parser:
         cur.close()
         conn.close()
 
+    ############################################################
+
+    def download_photo(self, url, path, req=None):
+        """ Downloads an image from a given url
+        and saves to the given path
+        """
+        if req is None:
+            # if no request object given, creating it
+            req = httplib2.Http()
+
+        headers, data = req.request(url, method='GET')
+        with open(path, 'wb') as fh:
+            fh.write(data)
+        return True
+
 
 ######################################################################
 ######################################################################
@@ -231,12 +288,22 @@ class AvitoParser(Parser):
     ############################################################
 
     def print_item(self, i):
-        print("%s\n\t%s\t%s\t%s\n\thttp://%s\n"
+        print("""\033[1;31m%s\033[0m
+\t%s\t%s\t%s
+\thttp://%s\n"""
               % (i['title'],
                  i['price'], i['date'], i['location'],
                  self.params['baseurl']+i['url']))
 
     ############################################################
+
+    def get_items_after_request_hook(self, parsed_body):
+        # checking if query was corrected
+        # if so, abandoning this query
+        query_correction = parsed_body.xpath(
+            ".//*[@class='catalog-correction']")
+        if len(query_correction) > 0:
+            raise SiteParseError("query_correction")
 
     def parse_item(self, i):
         """ Parse items html blocks to property dicts
@@ -244,6 +311,14 @@ class AvitoParser(Parser):
         d = i.xpath("*[@class='description']")[0]
 
         price = normalize_str(d.xpath("*[@class='about']/text()")[0])
+        price = ''.join([x for x in price if str(x).isdigit()])
+        if len(price) == 0:
+            # price not specified
+            price = 0
+        else:
+            # converting to int
+            price = int(price)
+
         title = normalize_str(d.xpath("*[@class='title']/a/text()")[0])
         url = d.xpath("*[@class='title']/a/@href")[0]
 
@@ -265,11 +340,12 @@ class AvitoParser(Parser):
         )[0]))
 
         # icon URL
+        photourls = []
         try:
-            photourl = i.xpath("*[@class='b-photo']/a/img/@src")[0]
+            photourls.append(i.xpath("*[@class='b-photo']/a/img/@src")[0])
         except:
             # for items without photo
-            photourl = ''
+            pass
 
         return {'price': price,
                 'title': title,
@@ -281,23 +357,25 @@ class AvitoParser(Parser):
                 'location': location,
                 'date': date,
 
-                'photourl': photourl,
+                'photourls': photourls,
                 }
 
     fields_order = ['price', 'title', 'url', 'category', 'company',
-                    'location', 'date', 'photourl']
+                    'location', 'date', 'photourls']
 
     def hash_item(self, i):
         """ Calculate hash uniquely identifying item """
         h = hashlib.md5()
         for f in self.fields_order:
-            h.update(i[f].encode('UTF-8'))
+            # strings need to be encoded
+            h.update(str(i[f]).encode('UTF-8'))
         return h.hexdigest()
 
 
 ######################################################################
 ######################################################################
 # Some helpers
+
 
 def normalize_date(d):
     """ Convert date from textual form to timestamp
